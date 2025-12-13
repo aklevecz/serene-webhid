@@ -1,0 +1,41 @@
+.picker {
+  font-family: var(--font-family-mono);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.keyButton {
+  min-width: 48px;
+  height: 32px;
+  padding: 4px 8px;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--color-text);
+  transition: background 0.1s, border-color 0.1s;
+
+  &:hover {
+    background: var(--color-background-secondary);
+    border-color: var(--color-text);
+  }
+
+  &:active {
+    background: var(--color-text);
+    color: var(--color-background);
+  }
+
+  &.selected {
+    background: var(--color-text);
+    color: var(--color-background);
+    border-color: var(--color-text);
+  }
+}
