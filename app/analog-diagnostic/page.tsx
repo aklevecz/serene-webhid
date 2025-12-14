@@ -5,7 +5,18 @@ import '@root/global.css';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useWebHID, InputReport } from '@common/useWebHID';
-import { VIAProtocol, VIACommand, RAW_HID_BUFFER_SIZE } from '@common/via';
+import {
+  VIAProtocol,
+  VIACommand,
+  RAW_HID_BUFFER_SIZE,
+  HECommand,
+  HEActuationMode,
+  HE_CUSTOM_CHANNEL,
+  HE_DEFAULTS,
+  HE_RANGES,
+} from '@common/via';
+
+import Link from 'next/link';
 
 import Badge from '@components/Badge';
 import Button from '@components/Button';
@@ -18,6 +29,12 @@ import RowSpaceBetween from '@components/RowSpaceBetween';
 import ActionButton from '@components/ActionButton';
 import AlertBanner from '@components/AlertBanner';
 import ButtonGroup from '@components/ButtonGroup';
+
+const NAV_ITEMS = [
+  { href: '/', label: 'Keymap Editor', description: 'Remap keys via VIA protocol' },
+  { href: '/hall-effect', label: 'Hall Effect', description: 'Configure HE keyboards' },
+  { href: '/analog-diagnostic', label: 'Diagnostics', description: 'Debug HID commands' },
+];
 
 interface LogEntry {
   timestamp: number;
@@ -99,6 +116,14 @@ export default function AnalogDiagnosticPage() {
   const [customChannelId, setCustomChannelId] = useState(0);
   const [customValueId, setCustomValueId] = useState(0);
   const [liveAnalogData, setLiveAnalogData] = useState<number[]>([]);
+  const [heConfig, setHeConfig] = useState<{
+    actuationMode: HEActuationMode;
+    actuationThreshold: number;
+    releaseThreshold: number;
+    deadzone: number;
+    engageDistance: number;
+    disengageDistance: number;
+  } | null>(null);
 
   const deviceInfo = getDeviceInfo();
 
@@ -284,6 +309,162 @@ export default function AnalogDiagnosticPage() {
     }
   };
 
+  // =========================================================================
+  // Hall Effect Specific Commands
+  // =========================================================================
+
+  const HE_COMMAND_NAMES: Record<number, string> = {
+    [HECommand.ACTUATION_THRESHOLD]: 'Actuation Threshold',
+    [HECommand.RELEASE_THRESHOLD]: 'Release Threshold',
+    [HECommand.START_CALIBRATION]: 'Start Calibration',
+    [HECommand.SAVE_CALIBRATION]: 'Save Calibration',
+    [HECommand.TOGGLE_ACTUATION_MODE]: 'Actuation Mode',
+    [HECommand.RAPID_TRIGGER_DEADZONE]: 'RT Deadzone',
+    [HECommand.RAPID_TRIGGER_ENGAGE_DISTANCE]: 'RT Engage Distance',
+    [HECommand.RAPID_TRIGGER_DISENGAGE_DISTANCE]: 'RT Disengage Distance',
+    [HECommand.KEYCANCEL_AD_MODE]: 'Key Cancel A+D',
+    [HECommand.KEYCANCEL_ZX_MODE]: 'Key Cancel Z+X',
+  };
+
+  const ACTUATION_MODE_NAMES: Record<number, string> = {
+    [HEActuationMode.NORMAL]: 'Normal',
+    [HEActuationMode.RAPID_TRIGGER]: 'Rapid Trigger',
+    [HEActuationMode.KEY_CANCEL]: 'Key Cancel',
+  };
+
+  // Test a specific HE command (GET)
+  const testHECommand = async (command: HECommand) => {
+    if (!device || !device.opened) {
+      addLog('error', 'HE', 'Device not connected');
+      return;
+    }
+
+    const commandName = HE_COMMAND_NAMES[command] || `Unknown (${command})`;
+    addLog('info', 'HE', `Getting ${commandName} (channel=${HE_CUSTOM_CHANNEL}, cmd=${command})`);
+
+    const buffer = new Uint8Array(RAW_HID_BUFFER_SIZE);
+    buffer[0] = VIACommand.CUSTOM_GET_VALUE;
+    buffer[1] = HE_CUSTOM_CHANNEL;
+    buffer[2] = command;
+
+    try {
+      await device.sendReport(0, buffer);
+      addLog('success', 'HE', `Sent GET for ${commandName}`);
+    } catch (err) {
+      addLog('error', 'HE', `Failed: ${err}`);
+    }
+  };
+
+  // Set a specific HE value
+  const setHEValue = async (command: HECommand, value: number) => {
+    if (!device || !device.opened) {
+      addLog('error', 'HE', 'Device not connected');
+      return;
+    }
+
+    const commandName = HE_COMMAND_NAMES[command] || `Unknown (${command})`;
+    addLog('info', 'HE', `Setting ${commandName} to ${value}`);
+
+    const buffer = new Uint8Array(RAW_HID_BUFFER_SIZE);
+    buffer[0] = VIACommand.CUSTOM_SET_VALUE;
+    buffer[1] = HE_CUSTOM_CHANNEL;
+    buffer[2] = command;
+    buffer[3] = value;
+
+    try {
+      await device.sendReport(0, buffer);
+      addLog('success', 'HE', `Sent SET ${commandName} = ${value}`);
+    } catch (err) {
+      addLog('error', 'HE', `Failed: ${err}`);
+    }
+  };
+
+  // Scan all HE commands
+  const scanHECommands = async () => {
+    addLog('info', 'HE_SCAN', 'Scanning all Hall Effect configuration values...');
+
+    const commands = [
+      HECommand.ACTUATION_THRESHOLD,
+      HECommand.RELEASE_THRESHOLD,
+      HECommand.TOGGLE_ACTUATION_MODE,
+      HECommand.RAPID_TRIGGER_DEADZONE,
+      HECommand.RAPID_TRIGGER_ENGAGE_DISTANCE,
+      HECommand.RAPID_TRIGGER_DISENGAGE_DISTANCE,
+      HECommand.KEYCANCEL_AD_MODE,
+      HECommand.KEYCANCEL_ZX_MODE,
+    ];
+
+    for (const cmd of commands) {
+      await testHECommand(cmd);
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    addLog('success', 'HE_SCAN', 'Scan complete - check logs for values');
+  };
+
+  // Load full HE config using VIA protocol class
+  const loadHEConfig = async () => {
+    if (!viaRef.current) {
+      addLog('error', 'HE', 'VIA not connected');
+      return;
+    }
+
+    addLog('info', 'HE', 'Loading full HE configuration via VIA protocol...');
+
+    try {
+      const config = await viaRef.current.getHEConfig();
+      setHeConfig({
+        actuationMode: config.actuationMode,
+        actuationThreshold: config.actuationThreshold,
+        releaseThreshold: config.releaseThreshold,
+        deadzone: config.rapidTrigger.deadzone,
+        engageDistance: config.rapidTrigger.engageDistance,
+        disengageDistance: config.rapidTrigger.disengageDistance,
+      });
+
+      addLog('success', 'HE', `Loaded config: Mode=${ACTUATION_MODE_NAMES[config.actuationMode]}, Act=${config.actuationThreshold}, Rel=${config.releaseThreshold}`);
+      addLog('info', 'HE', `Rapid Trigger: DZ=${config.rapidTrigger.deadzone}, Eng=${config.rapidTrigger.engageDistance}, Dis=${config.rapidTrigger.disengageDistance}`);
+      addLog('info', 'HE', `Key Cancel: A+D=${config.keyCancel.adMode}, Z+X=${config.keyCancel.zxMode}`);
+    } catch (err) {
+      addLog('error', 'HE', `Failed to load config: ${err}`);
+    }
+  };
+
+  // Start HE calibration
+  const startHECalibration = async () => {
+    if (!viaRef.current) {
+      addLog('error', 'HE', 'VIA not connected');
+      return;
+    }
+
+    addLog('info', 'HE_CAL', 'Starting Hall Effect calibration...');
+    addLog('info', 'HE_CAL', 'Press all keys fully to calibrate noise ceiling');
+
+    try {
+      await viaRef.current.startHECalibration();
+      addLog('success', 'HE_CAL', 'Calibration started - press keys now');
+    } catch (err) {
+      addLog('error', 'HE_CAL', `Failed: ${err}`);
+    }
+  };
+
+  // Save HE calibration
+  const saveHECalibration = async () => {
+    if (!viaRef.current) {
+      addLog('error', 'HE', 'VIA not connected');
+      return;
+    }
+
+    addLog('info', 'HE_CAL', 'Saving calibration to EEPROM...');
+
+    try {
+      await viaRef.current.saveHECalibration();
+      addLog('success', 'HE_CAL', 'Calibration saved');
+    } catch (err) {
+      addLog('error', 'HE_CAL', `Failed: ${err}`);
+    }
+  };
+
   // Log input reports with analysis
   useEffect(() => {
     if (inputReports.length > 0) {
@@ -372,6 +553,18 @@ export default function AnalogDiagnosticPage() {
           ANALOG DIAGNOSTIC TOOL <Badge>{isConnected ? 'CONNECTED' : 'DISCONNECTED'}</Badge>
         </Row>
         <Row>Test different methods to get live actuation data from Serene keyboard</Row>
+        <br />
+        <Card title="NAVIGATION">
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {NAV_ITEMS.map((item) => (
+              <Link key={item.href} href={item.href} style={{ textDecoration: 'none' }}>
+                <Button theme={item.href === '/analog-diagnostic' ? 'PRIMARY' : 'SECONDARY'}>
+                  {item.label}
+                </Button>
+              </Link>
+            ))}
+          </div>
+        </Card>
       </Grid>
 
       <Grid>
@@ -441,7 +634,71 @@ ${collections.map((c, i) => `  [${i}] Page: ${formatHex(c.usagePage || 0)} Usage
               />
             </Card>
 
-            <Card title="4. RAW COMMAND TEST">
+            <Card title="4. HALL EFFECT COMMANDS">
+              <Row>Test Hall Effect specific VIA commands (Cleaver HE firmware):</Row>
+              <br />
+              <ButtonGroup
+                items={[
+                  { body: 'Load HE Config', onClick: loadHEConfig, selected: false },
+                  { body: 'Scan All HE Values', onClick: scanHECommands, selected: false },
+                ]}
+              />
+              <br />
+              <Row>Individual HE Commands:</Row>
+              <br />
+              <ButtonGroup
+                items={[
+                  { body: 'Actuation', onClick: () => testHECommand(HECommand.ACTUATION_THRESHOLD), selected: false },
+                  { body: 'Release', onClick: () => testHECommand(HECommand.RELEASE_THRESHOLD), selected: false },
+                  { body: 'Mode', onClick: () => testHECommand(HECommand.TOGGLE_ACTUATION_MODE), selected: false },
+                  { body: 'RT Deadzone', onClick: () => testHECommand(HECommand.RAPID_TRIGGER_DEADZONE), selected: false },
+                ]}
+              />
+              <br />
+              <ButtonGroup
+                items={[
+                  { body: 'RT Engage', onClick: () => testHECommand(HECommand.RAPID_TRIGGER_ENGAGE_DISTANCE), selected: false },
+                  { body: 'RT Disengage', onClick: () => testHECommand(HECommand.RAPID_TRIGGER_DISENGAGE_DISTANCE), selected: false },
+                  { body: 'KC A+D', onClick: () => testHECommand(HECommand.KEYCANCEL_AD_MODE), selected: false },
+                  { body: 'KC Z+X', onClick: () => testHECommand(HECommand.KEYCANCEL_ZX_MODE), selected: false },
+                ]}
+              />
+              {heConfig && (
+                <>
+                  <br />
+                  <CodeBlock>
+{`Current HE Config:
+  Mode: ${ACTUATION_MODE_NAMES[heConfig.actuationMode]}
+  Actuation: ${heConfig.actuationThreshold}
+  Release: ${heConfig.releaseThreshold}
+  RT Deadzone: ${heConfig.deadzone}
+  RT Engage: ${heConfig.engageDistance}
+  RT Disengage: ${heConfig.disengageDistance}`}
+                  </CodeBlock>
+                </>
+              )}
+            </Card>
+
+            <Card title="5. HE CALIBRATION">
+              <Row>Calibrate Hall Effect sensors:</Row>
+              <br />
+              <ButtonGroup
+                items={[
+                  { body: 'Start Calibration', onClick: startHECalibration, selected: false },
+                  { body: 'Save Calibration', onClick: saveHECalibration, selected: false },
+                ]}
+              />
+              <br />
+              <CodeBlock>
+{`Calibration Process:
+1. Click "Start Calibration"
+2. Press each key fully to its bottom
+3. Release all keys
+4. Click "Save Calibration" to persist to EEPROM`}
+              </CodeBlock>
+            </Card>
+
+            <Card title="6. RAW COMMAND TEST">
               <Row>Send custom raw commands:</Row>
               <br />
               <ButtonGroup
@@ -454,7 +711,7 @@ ${collections.map((c, i) => `  [${i}] Page: ${formatHex(c.usagePage || 0)} Usage
               />
             </Card>
 
-            <Card title="5. CONTINUOUS POLLING">
+            <Card title="7. CONTINUOUS POLLING">
               <Row>Poll for data continuously:</Row>
               <br />
               <ButtonGroup

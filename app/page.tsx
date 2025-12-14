@@ -7,6 +7,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useWebHID, InputReport } from '@common/useWebHID';
 import { VIAProtocol, getKeyLabel } from '@common/via';
 
+import Link from 'next/link';
+
 import Badge from '@components/Badge';
 import Button from '@components/Button';
 import Card from '@components/Card';
@@ -24,6 +26,12 @@ import KeyPicker from '@components/KeyPicker';
 import Accordion from '@components/Accordion';
 import DefaultLayout from '@components/page/DefaultLayout';
 import ModalStack from '@components/ModalStack';
+
+const NAV_ITEMS = [
+  { href: '/', label: 'Keymap Editor', description: 'Remap keys via VIA protocol' },
+  { href: '/hall-effect', label: 'Hall Effect', description: 'Configure HE keyboards' },
+  { href: '/analog-diagnostic', label: 'Diagnostics', description: 'Debug HID commands' },
+];
 
 function formatHex(num: number): string {
   return '0x' + num.toString(16).padStart(2, '0').toUpperCase();
@@ -240,12 +248,27 @@ export default function KeyboardPage() {
       <br />
       <Grid>
         <Row>
-          KEYBOARD CONFIGURATOR <Badge>{isConnected ? (viaConnected ? 'VIA CONNECTED' : 'CONNECTED') : 'DISCONNECTED'}</Badge>
+          SERENE WEBHID <Badge>{isConnected ? (viaConnected ? 'VIA CONNECTED' : 'CONNECTED') : 'DISCONNECTED'}</Badge>
         </Row>
-        <Row>WebHID key remapping for QMK/VIA keyboards</Row>
+        <Row>WebHID keyboard configuration tools for QMK/VIA</Row>
+        <br />
+        <Card title="NAVIGATION">
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {NAV_ITEMS.map((item) => (
+              <Link key={item.href} href={item.href} style={{ textDecoration: 'none' }}>
+                <Button theme={item.href === '/' ? 'PRIMARY' : 'SECONDARY'}>
+                  {item.label}
+                </Button>
+              </Link>
+            ))}
+          </div>
+        </Card>
       </Grid>
 
       <Grid>
+        <Card title="KEYMAP EDITOR">
+          <Row>Remap keys on your QMK/VIA keyboard using WebHID</Row>
+        </Card>
         {error && <AlertBanner>{error}</AlertBanner>}
         {viaError && <AlertBanner>{viaError}</AlertBanner>}
         {saveStatus && <AlertBanner>{saveStatus}</AlertBanner>}

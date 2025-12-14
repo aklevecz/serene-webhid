@@ -1,8 +1,156 @@
 // VIA Protocol for QMK keyboards
 // Reference: https://github.com/the-via/app
+// Hall Effect support: https://github.com/SmollChungus/qmk_firmware/tree/dev_cleaver/keyboards/cleaver
 
 export const VIA_PROTOCOL_VERSION = 0x0c;
 export const RAW_HID_BUFFER_SIZE = 32;
+
+// =============================================================================
+// Hall Effect Configuration
+// =============================================================================
+
+// Hall Effect Custom Channel (used with CUSTOM_SET_VALUE/CUSTOM_GET_VALUE)
+export const HE_CUSTOM_CHANNEL = 0;
+
+// Hall Effect Custom Command IDs (sent as data[1] after channel)
+export enum HECommand {
+  ACTUATION_THRESHOLD = 1,
+  RELEASE_THRESHOLD = 2,
+  START_CALIBRATION = 4,
+  SAVE_CALIBRATION = 5,
+  TOGGLE_ACTUATION_MODE = 6,
+  RAPID_TRIGGER_DEADZONE = 7,
+  RAPID_TRIGGER_ENGAGE_DISTANCE = 8,
+  RAPID_TRIGGER_DISENGAGE_DISTANCE = 9,
+  KEYCANCEL_AD_MODE = 10,
+  KEYCANCEL_ZX_MODE = 11,
+}
+
+// Hall Effect Actuation Modes
+export enum HEActuationMode {
+  NORMAL = 0,
+  RAPID_TRIGGER = 1,
+  KEY_CANCEL = 2,
+}
+
+// Hall Effect Configuration Defaults (from Cleaver HE firmware)
+export const HE_DEFAULTS = {
+  ACTUATION_THRESHOLD: 50,      // 0-100 scale, trigger point for key press
+  RELEASE_THRESHOLD: 30,        // 0-100 scale, must be lower than actuation
+  RAPID_TRIGGER_DEADZONE: 15,   // 15-60 range
+  RAPID_TRIGGER_ENGAGE: 10,     // 5-20 range
+  RAPID_TRIGGER_DISENGAGE: 10,  // 5-20 range
+  NOISE_FLOOR: 510,             // Expected ADC value when unpressed
+  NOISE_CEILING: 10,            // Expected ADC value when fully pressed (with margin)
+} as const;
+
+// Hall Effect Configuration Ranges
+export const HE_RANGES = {
+  ACTUATION_THRESHOLD: { min: 10, max: 90 },
+  RELEASE_THRESHOLD: { min: 10, max: 90 },
+  RAPID_TRIGGER_DEADZONE: { min: 15, max: 60 },
+  RAPID_TRIGGER_ENGAGE: { min: 5, max: 20 },
+  RAPID_TRIGGER_DISENGAGE: { min: 5, max: 20 },
+} as const;
+
+// Hall Effect Configuration Types
+export interface HEConfig {
+  actuationMode: HEActuationMode;
+  actuationThreshold: number;
+  releaseThreshold: number;
+  rapidTrigger: {
+    deadzone: number;
+    engageDistance: number;
+    disengageDistance: number;
+  };
+  keyCancel: {
+    adMode: boolean;
+    zxMode: boolean;
+  };
+}
+
+// Per-key Hall Effect Configuration
+export interface HEKeyConfig {
+  actuationThreshold: number;
+  releaseThreshold: number;
+  noiseFloor: number;
+  noiseCeiling: number;
+}
+
+// =============================================================================
+// RGB Lighting Configuration
+// =============================================================================
+
+// VIA Lighting Channel (used with CUSTOM_SET_VALUE/CUSTOM_GET_VALUE)
+// Note: Standard VIA uses channel 1, but QMK RGB Matrix uses channel 2
+export const LIGHTING_CHANNEL = 2;
+
+// Lighting Value IDs (QMK RGB Matrix on channel 2)
+// These differ from standard VIA lighting (channel 1)
+export enum LightingValue {
+  // QMK RGB Matrix values (channel 2) - used by Cleaver HE
+  BRIGHTNESS = 0x01,   // Returns/sets brightness (0-255)
+  EFFECT = 0x02,       // Returns/sets effect mode
+  EFFECT_SPEED = 0x03, // Effect speed
+  COLOR_1 = 0x04,      // Primary color (hue, sat as two bytes)
+  COLOR_2 = 0x05,      // Secondary color
+
+  // Standard VIA lighting values (channel 1) - for reference
+  // VIA_BRIGHTNESS = 0x09,
+  // VIA_EFFECT = 0x0a,
+  // VIA_COLOR_1 = 0x0c,
+}
+
+// Common RGB Effects (QMK RGB Matrix effects)
+export enum RGBEffect {
+  OFF = 0,
+  SOLID_COLOR = 1,
+  BREATHING = 2,
+  BAND_SPIRAL_VAL = 3,
+  CYCLE_ALL = 4,
+  CYCLE_LEFT_RIGHT = 5,
+  CYCLE_UP_DOWN = 6,
+  RAINBOW_MOVING_CHEVRON = 7,
+  CYCLE_OUT_IN = 8,
+  CYCLE_OUT_IN_DUAL = 9,
+  CYCLE_PINWHEEL = 10,
+  CYCLE_SPIRAL = 11,
+  DUAL_BEACON = 12,
+  RAINBOW_BEACON = 13,
+  RAINBOW_PINWHEELS = 14,
+  RAINDROPS = 15,
+  JELLYBEAN_RAINDROPS = 16,
+  HUE_BREATHING = 17,
+  HUE_PENDULUM = 18,
+  HUE_WAVE = 19,
+  TYPING_HEATMAP = 20,
+  DIGITAL_RAIN = 21,
+  SOLID_REACTIVE_SIMPLE = 22,
+  SOLID_REACTIVE = 23,
+  SOLID_REACTIVE_WIDE = 24,
+  SOLID_REACTIVE_MULTIWIDE = 25,
+  SOLID_REACTIVE_CROSS = 26,
+  SOLID_REACTIVE_MULTICROSS = 27,
+  SOLID_REACTIVE_NEXUS = 28,
+  SOLID_REACTIVE_MULTINEXUS = 29,
+  SPLASH = 30,
+  MULTISPLASH = 31,
+  SOLID_SPLASH = 32,
+  SOLID_MULTISPLASH = 33,
+}
+
+// RGB Configuration
+export interface RGBConfig {
+  brightness: number;    // 0-255
+  effect: RGBEffect;
+  effectSpeed: number;   // 0-255
+  color1: { hue: number; sat: number }; // hue: 0-255, sat: 0-255
+  color2: { hue: number; sat: number };
+}
+
+// =============================================================================
+// Standard VIA Protocol
+// =============================================================================
 
 export enum VIACommand {
   GET_PROTOCOL_VERSION = 0x01,
@@ -365,5 +513,307 @@ export class VIAProtocol {
     }
 
     return pressedKeys;
+  }
+
+  // ===========================================================================
+  // Hall Effect Methods
+  // ===========================================================================
+
+  // Get a Hall Effect custom value
+  private async getHEValue(command: HECommand): Promise<number> {
+    const response = await this.sendCommand(VIACommand.CUSTOM_GET_VALUE, [
+      HE_CUSTOM_CHANNEL,
+      command,
+    ]);
+    // Response format: [cmd, channel, command_id, value]
+    return response[3];
+  }
+
+  // Set a Hall Effect custom value
+  private async setHEValue(command: HECommand, value: number): Promise<void> {
+    await this.sendCommand(VIACommand.CUSTOM_SET_VALUE, [
+      HE_CUSTOM_CHANNEL,
+      command,
+      value,
+    ]);
+  }
+
+  // Save Hall Effect configuration to EEPROM
+  async heCustomSave(): Promise<void> {
+    await this.sendCommand(VIACommand.CUSTOM_SAVE, [HE_CUSTOM_CHANNEL]);
+  }
+
+  // --- Actuation Threshold ---
+  async getHEActuationThreshold(): Promise<number> {
+    return this.getHEValue(HECommand.ACTUATION_THRESHOLD);
+  }
+
+  async setHEActuationThreshold(value: number): Promise<void> {
+    const clamped = Math.max(HE_RANGES.ACTUATION_THRESHOLD.min, Math.min(HE_RANGES.ACTUATION_THRESHOLD.max, value));
+    await this.setHEValue(HECommand.ACTUATION_THRESHOLD, clamped);
+  }
+
+  // --- Release Threshold ---
+  async getHEReleaseThreshold(): Promise<number> {
+    return this.getHEValue(HECommand.RELEASE_THRESHOLD);
+  }
+
+  async setHEReleaseThreshold(value: number): Promise<void> {
+    const clamped = Math.max(HE_RANGES.RELEASE_THRESHOLD.min, Math.min(HE_RANGES.RELEASE_THRESHOLD.max, value));
+    await this.setHEValue(HECommand.RELEASE_THRESHOLD, clamped);
+  }
+
+  // --- Actuation Mode ---
+  async getHEActuationMode(): Promise<HEActuationMode> {
+    const mode = await this.getHEValue(HECommand.TOGGLE_ACTUATION_MODE);
+    return mode as HEActuationMode;
+  }
+
+  async setHEActuationMode(mode: HEActuationMode): Promise<void> {
+    await this.setHEValue(HECommand.TOGGLE_ACTUATION_MODE, mode);
+  }
+
+  async toggleHEActuationMode(): Promise<HEActuationMode> {
+    // Toggle cycles through: Normal -> Rapid Trigger -> Key Cancel -> Normal
+    const current = await this.getHEActuationMode();
+    const next = (current + 1) % 3 as HEActuationMode;
+    await this.setHEActuationMode(next);
+    return next;
+  }
+
+  // --- Rapid Trigger Configuration ---
+  async getHERapidTriggerDeadzone(): Promise<number> {
+    return this.getHEValue(HECommand.RAPID_TRIGGER_DEADZONE);
+  }
+
+  async setHERapidTriggerDeadzone(value: number): Promise<void> {
+    const clamped = Math.max(HE_RANGES.RAPID_TRIGGER_DEADZONE.min, Math.min(HE_RANGES.RAPID_TRIGGER_DEADZONE.max, value));
+    await this.setHEValue(HECommand.RAPID_TRIGGER_DEADZONE, clamped);
+  }
+
+  async getHERapidTriggerEngageDistance(): Promise<number> {
+    return this.getHEValue(HECommand.RAPID_TRIGGER_ENGAGE_DISTANCE);
+  }
+
+  async setHERapidTriggerEngageDistance(value: number): Promise<void> {
+    const clamped = Math.max(HE_RANGES.RAPID_TRIGGER_ENGAGE.min, Math.min(HE_RANGES.RAPID_TRIGGER_ENGAGE.max, value));
+    await this.setHEValue(HECommand.RAPID_TRIGGER_ENGAGE_DISTANCE, clamped);
+  }
+
+  async getHERapidTriggerDisengageDistance(): Promise<number> {
+    return this.getHEValue(HECommand.RAPID_TRIGGER_DISENGAGE_DISTANCE);
+  }
+
+  async setHERapidTriggerDisengageDistance(value: number): Promise<void> {
+    const clamped = Math.max(HE_RANGES.RAPID_TRIGGER_DISENGAGE.min, Math.min(HE_RANGES.RAPID_TRIGGER_DISENGAGE.max, value));
+    await this.setHEValue(HECommand.RAPID_TRIGGER_DISENGAGE_DISTANCE, clamped);
+  }
+
+  // --- Key Cancel Configuration ---
+  async getHEKeyCancelADMode(): Promise<boolean> {
+    return (await this.getHEValue(HECommand.KEYCANCEL_AD_MODE)) !== 0;
+  }
+
+  async setHEKeyCancelADMode(enabled: boolean): Promise<void> {
+    await this.setHEValue(HECommand.KEYCANCEL_AD_MODE, enabled ? 1 : 0);
+  }
+
+  async getHEKeyCancelZXMode(): Promise<boolean> {
+    return (await this.getHEValue(HECommand.KEYCANCEL_ZX_MODE)) !== 0;
+  }
+
+  async setHEKeyCancelZXMode(enabled: boolean): Promise<void> {
+    await this.setHEValue(HECommand.KEYCANCEL_ZX_MODE, enabled ? 1 : 0);
+  }
+
+  // --- Calibration ---
+  async startHECalibration(): Promise<void> {
+    await this.setHEValue(HECommand.START_CALIBRATION, 1);
+  }
+
+  async saveHECalibration(): Promise<void> {
+    await this.setHEValue(HECommand.SAVE_CALIBRATION, 1);
+  }
+
+  // --- Get Full HE Configuration ---
+  // Note: Requests are sent sequentially because many keyboards can't handle parallel HID requests
+  async getHEConfig(): Promise<HEConfig> {
+    const actuationMode = await this.getHEActuationMode();
+    const actuationThreshold = await this.getHEActuationThreshold();
+    const releaseThreshold = await this.getHEReleaseThreshold();
+    const deadzone = await this.getHERapidTriggerDeadzone();
+    const engageDistance = await this.getHERapidTriggerEngageDistance();
+    const disengageDistance = await this.getHERapidTriggerDisengageDistance();
+    const adMode = await this.getHEKeyCancelADMode();
+    const zxMode = await this.getHEKeyCancelZXMode();
+
+    return {
+      actuationMode,
+      actuationThreshold,
+      releaseThreshold,
+      rapidTrigger: {
+        deadzone,
+        engageDistance,
+        disengageDistance,
+      },
+      keyCancel: {
+        adMode,
+        zxMode,
+      },
+    };
+  }
+
+  // --- Set Full HE Configuration ---
+  // Note: Requests are sent sequentially because many keyboards can't handle parallel HID requests
+  async setHEConfig(config: Partial<HEConfig>): Promise<void> {
+    if (config.actuationMode !== undefined) {
+      await this.setHEActuationMode(config.actuationMode);
+    }
+    if (config.actuationThreshold !== undefined) {
+      await this.setHEActuationThreshold(config.actuationThreshold);
+    }
+    if (config.releaseThreshold !== undefined) {
+      await this.setHEReleaseThreshold(config.releaseThreshold);
+    }
+    if (config.rapidTrigger) {
+      if (config.rapidTrigger.deadzone !== undefined) {
+        await this.setHERapidTriggerDeadzone(config.rapidTrigger.deadzone);
+      }
+      if (config.rapidTrigger.engageDistance !== undefined) {
+        await this.setHERapidTriggerEngageDistance(config.rapidTrigger.engageDistance);
+      }
+      if (config.rapidTrigger.disengageDistance !== undefined) {
+        await this.setHERapidTriggerDisengageDistance(config.rapidTrigger.disengageDistance);
+      }
+    }
+    if (config.keyCancel) {
+      if (config.keyCancel.adMode !== undefined) {
+        await this.setHEKeyCancelADMode(config.keyCancel.adMode);
+      }
+      if (config.keyCancel.zxMode !== undefined) {
+        await this.setHEKeyCancelZXMode(config.keyCancel.zxMode);
+      }
+    }
+  }
+
+  // ===========================================================================
+  // RGB Lighting Methods
+  // ===========================================================================
+
+  // Get a lighting value
+  private async getLightingValue(valueId: LightingValue): Promise<Uint8Array> {
+    const response = await this.sendCommand(VIACommand.CUSTOM_GET_VALUE, [
+      LIGHTING_CHANNEL,
+      valueId,
+    ]);
+    return response;
+  }
+
+  // Set a lighting value (fire-and-forget, no response expected)
+  private async setLightingValue(valueId: LightingValue, ...values: number[]): Promise<void> {
+    if (!this.device || !this.device.opened) {
+      throw new Error('Device not connected');
+    }
+
+    const buffer = new Uint8Array(RAW_HID_BUFFER_SIZE);
+    buffer[0] = VIACommand.CUSTOM_SET_VALUE;
+    buffer[1] = LIGHTING_CHANNEL;
+    buffer[2] = valueId;
+    for (let i = 0; i < values.length; i++) {
+      buffer[3 + i] = values[i];
+    }
+
+    // Fire and forget - don't wait for response
+    await this.device.sendReport(0, buffer);
+  }
+
+  // Save lighting configuration to EEPROM
+  async saveLighting(): Promise<void> {
+    await this.sendCommand(VIACommand.CUSTOM_SAVE, [LIGHTING_CHANNEL]);
+  }
+
+  // --- Brightness ---
+  async getRGBBrightness(): Promise<number> {
+    const response = await this.getLightingValue(LightingValue.BRIGHTNESS);
+    return response[3];
+  }
+
+  async setRGBBrightness(brightness: number): Promise<void> {
+    const clamped = Math.max(0, Math.min(255, brightness));
+    await this.setLightingValue(LightingValue.BRIGHTNESS, clamped);
+  }
+
+  // --- Effect Mode ---
+  async getRGBEffect(): Promise<RGBEffect> {
+    const response = await this.getLightingValue(LightingValue.EFFECT);
+    return response[3] as RGBEffect;
+  }
+
+  async setRGBEffect(effect: RGBEffect): Promise<void> {
+    await this.setLightingValue(LightingValue.EFFECT, effect);
+  }
+
+  // --- Effect Speed ---
+  async getRGBEffectSpeed(): Promise<number> {
+    const response = await this.getLightingValue(LightingValue.EFFECT_SPEED);
+    return response[3];
+  }
+
+  async setRGBEffectSpeed(speed: number): Promise<void> {
+    const clamped = Math.max(0, Math.min(255, speed));
+    await this.setLightingValue(LightingValue.EFFECT_SPEED, clamped);
+  }
+
+  // --- Colors ---
+  async getRGBColor1(): Promise<{ hue: number; sat: number }> {
+    const response = await this.getLightingValue(LightingValue.COLOR_1);
+    return { hue: response[3], sat: response[4] };
+  }
+
+  async setRGBColor1(hue: number, sat: number): Promise<void> {
+    await this.setLightingValue(LightingValue.COLOR_1, hue & 0xff, sat & 0xff);
+  }
+
+  async getRGBColor2(): Promise<{ hue: number; sat: number }> {
+    const response = await this.getLightingValue(LightingValue.COLOR_2);
+    return { hue: response[3], sat: response[4] };
+  }
+
+  async setRGBColor2(hue: number, sat: number): Promise<void> {
+    await this.setLightingValue(LightingValue.COLOR_2, hue & 0xff, sat & 0xff);
+  }
+
+  // --- Get Full RGB Config ---
+  async getRGBConfig(): Promise<RGBConfig> {
+    const brightness = await this.getRGBBrightness();
+    const effect = await this.getRGBEffect();
+    const effectSpeed = await this.getRGBEffectSpeed();
+    const color1 = await this.getRGBColor1();
+    const color2 = await this.getRGBColor2();
+
+    return {
+      brightness,
+      effect,
+      effectSpeed,
+      color1,
+      color2,
+    };
+  }
+
+  // --- Quick RGB Controls ---
+  async setRGBOff(): Promise<void> {
+    await this.setRGBEffect(RGBEffect.OFF);
+  }
+
+  async setRGBSolidColor(hue: number, sat: number, brightness?: number): Promise<void> {
+    await this.setRGBEffect(RGBEffect.SOLID_COLOR);
+    await this.setRGBColor1(hue, sat);
+    if (brightness !== undefined) {
+      await this.setRGBBrightness(brightness);
+    }
+  }
+
+  async setRGBRainbow(): Promise<void> {
+    await this.setRGBEffect(RGBEffect.CYCLE_ALL);
   }
 }
