@@ -1,0 +1,14 @@
+.container {
+  width: 100%;
+  font-family: var(--font-family-mono);
+}
+
+.canvas {
+  display: block;
+  background: var(--color-background);
+
+  &:focus {
+    outline: 0;
+    box-shadow: inset 0 0 0 1px var(--color-text);
+  }
+}

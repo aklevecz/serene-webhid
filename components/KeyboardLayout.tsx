@@ -89,6 +89,7 @@ interface KeyboardLayoutProps {
   selectedKey?: { row: number; col: number } | null;
   onKeySelect?: (key: KeyDefinition) => void;
   layer?: number;
+  pressedKeys?: Set<string>;  // "row,col" for currently pressed keys
 }
 
 export default function KeyboardLayout({
@@ -97,6 +98,7 @@ export default function KeyboardLayout({
   selectedKey,
   onKeySelect,
   layer = 0,
+  pressedKeys,
 }: KeyboardLayoutProps) {
   const UNIT_SIZE = 40; // pixels per unit
   const GAP = 2;
@@ -107,6 +109,10 @@ export default function KeyboardLayout({
 
   const isSelected = (key: KeyDefinition): boolean => {
     return selectedKey?.row === key.row && selectedKey?.col === key.col;
+  };
+
+  const isPressed = (key: KeyDefinition): boolean => {
+    return pressedKeys?.has(`${key.row},${key.col}`) ?? false;
   };
 
   return (
@@ -128,7 +134,7 @@ export default function KeyboardLayout({
           return (
             <button
               key={`${key.row}-${key.col}`}
-              className={`${styles.key} ${isSelected(key) ? styles.selected : ''}`}
+              className={`${styles.key} ${isSelected(key) ? styles.selected : ''} ${isPressed(key) ? styles.pressed : ''}`}
               style={{
                 left: key.x * UNIT_SIZE + key.x * GAP,
                 top: key.y * UNIT_SIZE + key.y * GAP,

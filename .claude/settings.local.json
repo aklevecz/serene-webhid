@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "WebSearch",
+      "Bash(npm install:*)",
+      "Bash(npx wrangler:*)",
+      "Bash(npm run deploy:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

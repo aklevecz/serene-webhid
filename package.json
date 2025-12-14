@@ -10,7 +10,9 @@
     "dev": "next -p 10000",
     "build": "next build",
     "start": "PORT=10000 next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "preview": "opennextjs-cloudflare build && wrangler dev",
+    "deploy": "opennextjs-cloudflare build && wrangler deploy"
   },
   "dependencies": {
     "next": "^16.0.7",
@@ -19,9 +21,11 @@
     "sass": "1.94.2"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.14.6",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.54.0"
   }
 }

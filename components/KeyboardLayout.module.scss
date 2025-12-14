@@ -47,6 +47,12 @@
     color: var(--color-background);
     border-color: var(--color-text);
   }
+
+  &.pressed {
+    background: var(--color-success, #22c55e);
+    color: var(--color-background);
+    border-color: var(--color-success, #22c55e);
+  }
 }
 
 .label {

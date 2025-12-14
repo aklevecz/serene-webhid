@@ -254,6 +254,11 @@ export class VIAProtocol {
       throw new Error('Device not connected');
     }
 
+    // Clear any stale pending request for this command
+    if (this.pendingRequests.has(command)) {
+      this.pendingRequests.delete(command);
+    }
+
     const buffer = new Uint8Array(RAW_HID_BUFFER_SIZE);
     buffer[0] = command;
     for (let i = 0; i < data.length && i < RAW_HID_BUFFER_SIZE - 1; i++) {
@@ -261,20 +266,29 @@ export class VIAProtocol {
     }
 
     return new Promise((resolve, reject) => {
-      this.pendingRequests.set(command, { resolve, reject });
-
-      this.device!.sendReport(0, buffer).catch((err) => {
-        this.pendingRequests.delete(command);
-        reject(err);
-      });
-
-      // Timeout after 1 second
-      setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         if (this.pendingRequests.has(command)) {
           this.pendingRequests.delete(command);
           reject(new Error('Request timed out'));
         }
-      }, 1000);
+      }, 500); // Shorter timeout for faster recovery
+
+      this.pendingRequests.set(command, {
+        resolve: (data) => {
+          clearTimeout(timeoutId);
+          resolve(data);
+        },
+        reject: (err) => {
+          clearTimeout(timeoutId);
+          reject(err);
+        },
+      });
+
+      this.device!.sendReport(0, buffer).catch((err) => {
+        clearTimeout(timeoutId);
+        this.pendingRequests.delete(command);
+        reject(err);
+      });
     });
   }
 
@@ -322,5 +336,34 @@ export class VIAProtocol {
 
   async jumpToBootloader(): Promise<void> {
     await this.sendCommand(VIACommand.BOOTLOADER_JUMP);
+  }
+
+  async getMatrixState(): Promise<Set<string>> {
+    const response = await this.sendCommand(VIACommand.GET_KEYBOARD_VALUE, [KeyboardValue.SWITCH_MATRIX_STATE]);
+    const pressedKeys = new Set<string>();
+
+    // Response format: [cmd, subcmd, ...matrix_data]
+    // Matrix data is a bitmap where each bit represents a key
+    // The exact format depends on the keyboard's matrix size
+    const matrixData = response.slice(2);
+
+    // Parse the bitmap - each byte contains 8 keys
+    // Bit order: col0-7 for row0, then col0-7 for row1, etc.
+    for (let byteIndex = 0; byteIndex < matrixData.length; byteIndex++) {
+      const byte = matrixData[byteIndex];
+      if (byte === 0) continue;
+
+      for (let bit = 0; bit < 8; bit++) {
+        if (byte & (1 << bit)) {
+          // Calculate row and column from byte position and bit
+          const keyIndex = byteIndex * 8 + bit;
+          const row = Math.floor(keyIndex / 16); // Assuming max 16 cols
+          const col = keyIndex % 16;
+          pressedKeys.add(`${row},${col}`);
+        }
+      }
+    }
+
+    return pressedKeys;
   }
 }
